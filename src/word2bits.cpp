@@ -50,6 +50,7 @@ int *vocab_hash;
 long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100;
 long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0;
 bool save_every_epoch = 0;
+float sparsification = 0;
 real alpha = 0.05, starting_alpha, sample = 1e-3;
 real reg = 0;
 double *thread_losses;
@@ -487,7 +488,7 @@ void *TrainModelThread(void *id) {
 	  context_avge[c] += g * quantize(v[c + l2], local_bitlevel);
 	}
 	for (c = 0; c < layer1_size; c++) {
-	  v[c + l2] += g * context_avg[c] - 2*alpha*reg*v[c + l2];
+	  v[c + l2] += (1.0 - sparsification) * (g * context_avg[c] - 2*alpha*reg*v[c + l2]) - sparsification * sigmoid(v[c + l2]) * (1.0 - sigmoid(v[c + l2]));
 	}
       }
       // hidden -> in
@@ -498,7 +499,7 @@ void *TrainModelThread(void *id) {
 	  last_word = sen[c];
 	  if (last_word == -1) continue;
 	  for (c = 0; c < layer1_size; c++) {
-	    u[c + last_word * layer1_size] += context_avge[c] - 2*alpha*reg*u[c+last_word*layer1_size];
+	    u[c + last_word * layer1_size] += (1.0 - sparsification) * (context_avge[c] - 2*alpha*reg*u[c+last_word*layer1_size]) - sparsification * sigmoid(u[c+last_word*layer1_size]) * (1.0 - sigmoid(u[c+last_word*layer1_size]));
 	  }
 	}
     }
@@ -601,6 +602,7 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-debug", argc, argv)) > 0) debug_mode = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-binary", argc, argv)) > 0) binary = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-alpha", argc, argv)) > 0) alpha = atof(argv[i + 1]);
+  if ((i = ArgPos((char *)"-sparsification", argc, argv)) > 0) sparsification = atof(argv[i + 1]);
   if ((i = ArgPos((char *)"-output", argc, argv)) > 0) strcpy(output_file, argv[i + 1]);
   if ((i = ArgPos((char *)"-window", argc, argv)) > 0) window = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-sample", argc, argv)) > 0) sample = atof(argv[i + 1]);
