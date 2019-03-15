@@ -1,10 +1,10 @@
 CC_MIKOLOV=g++
 CFLAGS=-O3 -march=native -lm -pthread -Wno-unused-result
 
-word2bits:
-	$(CC_MIKOLOV) $(CFLAGS) ./src/word2bits.cpp -o word2bits
-compute_accuracy:
-	$(CC_MIKOLOV) $(CFLAGS) ./src/compute-accuracy.c -o compute_accuracy
+word2bits: src/word2bits.cpp
+	$(CC_MIKOLOV) $(CFLAGS) $< -o $@
+compute_accuracy: src/compute-accuracy.c
+	$(CC_MIKOLOV) $(CFLAGS) $< -o $@
 clean:
 	rm -f word2bits
 	rm -f compute_accuracy
