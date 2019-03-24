@@ -488,7 +488,7 @@ void *TrainModelThread(void *id) {
 	  context_avge[c] += g * quantize(v[c + l2], local_bitlevel);
 	}
 	for (c = 0; c < layer1_size; c++) {
-	  v[c + l2] += alpha * ((1.0 - sparsification / (c + 1)) * (g * context_avg[c] - 2*reg*v[c + l2]) - sparsification / (c + 1));
+	  v[c + l2] += alpha * ((1.0 - sparsification / (c + 1)) * (g * context_avg[c] - 2*reg*v[c + l2])) - sparsification / (c + 1);
 	}
       }
       // hidden -> in
@@ -499,7 +499,7 @@ void *TrainModelThread(void *id) {
 	  last_word = sen[c];
 	  if (last_word == -1) continue;
 	  for (c = 0; c < layer1_size; c++) {
-	    u[c + last_word * layer1_size] += alpha * ((1.0 - sparsification / (c + 1)) * (context_avge[c] - 2*reg*u[c+last_word*layer1_size]) - sparsification / (c + 1));
+	    u[c + last_word * layer1_size] += alpha * ((1.0 - sparsification / (c + 1)) * (context_avge[c] - 2*reg*u[c+last_word*layer1_size])) - sparsification / (c + 1);
 	  }
 	}
     }
