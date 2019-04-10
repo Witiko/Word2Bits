@@ -18,6 +18,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include "bit_array.h"
 
 const long long max_size = 2000;         // max length of strings
 const long long N = 1;                   // number of closest words
@@ -64,10 +65,12 @@ int main(int argc, char **argv)
 {
   FILE *f;
   char st1[max_size], st2[max_size], st3[max_size], st4[max_size], bestw[N][max_size], file_name[max_size];
-  float dist, len, bestd[N], vec[max_size];
+  bit_index_t dist, bestd[N];
   long long words, size, a, b, c, d, b1, b2, b3, threshold = 0;
   int bitlevel = 0, binary = 0;
-  float *M;
+  float feature;
+  BIT_ARRAY *vec;
+  BIT_ARRAY **M;
   char *vocab;
   int TCN, CCN = 0, TACN = 0, CACN = 0, SECN = 0, SYCN = 0, SEAC = 0, SYAC = 0, QID = 0, TQ = 0, TQS = 0;
   if (argc < 2) {
@@ -86,14 +89,15 @@ int main(int argc, char **argv)
   if (threshold) if (words > threshold) words = threshold;
   fscanf(f, "%lld", &size);
   vocab = (char *)malloc(words * max_w * sizeof(char));
-  M = (float *)malloc(words * size * sizeof(float));
+  M = (BIT_ARRAY **)malloc(words * sizeof(BIT_ARRAY *));
   if (M == NULL) {
-    printf("Cannot allocate memory: %lld MB\n", words * size * sizeof(float) / 1048576);
+    printf("Cannot allocate memory: %lld MB\n", words * sizeof(BIT_ARRAY *) / 1048576);
     return -1;
   }
   printf("Starting eval...\n");
   fflush(stdout);
   for (b = 0; b < words; b++) {
+    M[b] = bit_array_create(size);
     a = 0;
     while (1) {
       vocab[b * max_w + a] = fgetc(f);
@@ -103,20 +107,22 @@ int main(int argc, char **argv)
     vocab[b * max_w + a] = 0;
     for (a = 0; a < max_w; a++) vocab[b * max_w + a] = toupper(vocab[b * max_w + a]);
     if (binary) {
-      for (a = 0; a < size; a++) fread(&M[a + b * size], sizeof(float), 1, f);
+      for (a = 0; a < size; a++) {
+        fread(&feature, sizeof(float), 1, f);
+        bit_array_assign_bit(M[b], a, feature > 0);
+      }
     } else {
-      for (a = 0; a < size; a++) fscanf(f, "%f ", &M[a + b * size]);
+      for (a = 0; a < size; a++) {
+        fscanf(f, "%f ", &feature);
+        bit_array_assign_bit(M[b], a, feature > 0);
+      }
     }
-    for (a = 0; a < size; a++) M[a+b*size] = quantize(M[a+b*size], bitlevel);
-    len = 0;
-    for (a = 0; a < size; a++) len += M[a + b * size] * M[a + b * size];
-    len = sqrt(len);
-    for (a = 0; a < size; a++) M[a + b * size] /= len;
   }
   fclose(f);
   TCN = 0;
+  vec = bit_array_create(size);
   while (1) {
-    for (a = 0; a < N; a++) bestd[a] = 0;
+    for (a = 0; a < N; a++) bestd[a] = UINT64_MAX;
     for (a = 0; a < N; a++) bestw[a][0] = 0;
     scanf("%s", st1);
     for (a = 0; a < strlen(st1); a++) st1[a] = toupper(st1[a]);
@@ -147,7 +153,7 @@ int main(int argc, char **argv)
     b2 = b;
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st3)) break;
     b3 = b;
-    for (a = 0; a < N; a++) bestd[a] = 0;
+    for (a = 0; a < N; a++) bestd[a] = UINT64_MAX;
     for (a = 0; a < N; a++) bestw[a][0] = 0;
     TQ++;
     if (b1 == words) continue;
@@ -156,19 +162,18 @@ int main(int argc, char **argv)
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st4)) break;
     if (b == words) continue;
 
-    for (a = 0; a < size; a++) vec[a] = (M[a + b2 * size] - M[a + b1 * size]) + M[a + b3 * size];
+    bit_array_not(vec, M[b1]);
+    bit_array_and(vec, M[b2], vec);
+    bit_array_or(vec, M[b3], vec);
     
     TQS++;
     for (c = 0; c < words; c++) {
       if (c == b1) continue;
       if (c == b2) continue;
       if (c == b3) continue;
-      dist = 0;
-      for (a = 0; a < size; a++) {
-	dist += vec[a] * M[a + c * size];
-      }
+      dist = bit_array_hamming_distance(vec, M[c]);
       for (a = 0; a < N; a++) {
-	if (dist > bestd[a]) {
+	if (dist < bestd[a]) {
 	  for (d = N - 1; d > a; d--) {
 	    bestd[d] = bestd[d - 1];
 	    strcpy(bestw[d], bestw[d - 1]);
