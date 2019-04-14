@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,9 +20,55 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-const long long max_size = 2000;         // max length of strings
-const long long N = 1;                   // number of closest words
-const long long max_w = 50;              // max length of vocabulary entries
+#ifndef BITWISE_DISTANCES
+typedef float feature_t;
+typedef float distance_t;
+#else
+typedef uint32_t feature_t;
+typedef unsigned long long distance_t;
+
+#define RESERVE_BITS(n) (((n)+0x1f)>>5)
+#define DW_INDEX(x) ((x)>>5)
+#define BIT_INDEX(x) ((x)&0x1f)
+#define getbit(array, index) (((array)[DW_INDEX(index)]>>BIT_INDEX(index))&1)
+#define putbit(array, index, bit) \
+    ((bit)&1 ?  ((array)[DW_INDEX(index)] |= 1<<BIT_INDEX(index)) \
+             :  ((array)[DW_INDEX(index)] &= ~(1<<BIT_INDEX(index))) \
+             , 0 \
+    )
+static inline void bit_array_print(feature_t* array, size_t num_features) {
+  for (size_t index = 0; index < num_features; index++) {
+    printf("%d", getbit(array, index));
+  }
+  printf("\n");
+}
+static inline distance_t bit_array_hamming_distance(feature_t* x, feature_t* y, size_t size) {
+  distance_t distance = 0;
+  for (size_t a = 0; a < size; a++) {
+    distance += __builtin_popcount(x[a] ^ y[a]);
+  }
+  return distance;
+}
+static inline void bit_array_not(feature_t* dest, feature_t* x, size_t size) {
+  for (size_t a = 0; a < size; a++) {
+    dest[a] = ~x[a];
+  }
+}
+static inline void bit_array_and(feature_t* dest, feature_t* x, feature_t* y, size_t size) {
+  for (size_t a = 0; a < size; a++) {
+    dest[a] = x[a] & y[a];
+  }
+}
+static inline void bit_array_or(feature_t* dest, feature_t* x, feature_t* y, size_t size) {
+  for (size_t a = 0; a < size; a++) {
+    dest[a] = x[a] | y[a];
+  }
+}
+#endif
+
+const size_t max_size = 2000;         // max length of strings
+const size_t N = 1;                   // number of closest words
+const size_t max_w = 50;              // max length of vocabulary entries
 
 float quantize(float num, int bitlevel) {
 
@@ -64,10 +111,10 @@ int main(int argc, char **argv)
 {
   FILE *f;
   char st1[max_size], st2[max_size], st3[max_size], st4[max_size], bestw[N][max_size], file_name[max_size];
-  float dist, len, bestd[N], vec[max_size];
-  long long words, size, a, b, c, d, b1, b2, b3, threshold = 0;
+  distance_t dist, bestd[N];
+  size_t words, size, num_features, a, b, c, d, b1, b2, b3, threshold = 0;
   int bitlevel = 0, binary = 1;
-  float *M;
+  feature_t *M;
   char *vocab;
   int TCN, CCN = 0, TACN = 0, CACN = 0, SECN = 0, SYCN = 0, SEAC = 0, SYAC = 0, QID = 0, TQ = 0, TQS = 0;
   if (argc < 2) {
@@ -97,16 +144,27 @@ int main(int argc, char **argv)
   }
   fscanf(f, "%lld", &words);
   if (threshold) if (words > threshold) words = threshold;
-  fscanf(f, "%lld", &size);
+  fscanf(f, "%lld", &num_features);
+#ifndef BITWISE_DISTANCES
+  size = num_features;
+  distance_t len;
+#else
+  size = RESERVE_BITS(num_features);
+#endif
+  float feature;
+  feature_t vec[size];
   vocab = (char *)malloc(words * max_w * sizeof(char));
-  M = (float *)malloc(words * size * sizeof(float));
+  M = (feature_t *)malloc(words * size * sizeof(feature_t));
   if (M == NULL) {
-    printf("Cannot allocate memory: %lld MB\n", words * size * sizeof(float) / 1048576);
+    printf("Cannot allocate memory: %lld MB\n", words * size * sizeof(feature_t) / 1048576);
     return -1;
   }
   printf("Starting eval...\n");
   fflush(stdout);
   for (b = 0; b < words; b++) {
+#ifdef BITWISE_DISTANCES
+    for (a = 0; a < size; a++) M[a + b * size] = 0;
+#endif
     a = 0;
     while (1) {
       vocab[b * max_w + a] = fgetc(f);
@@ -116,20 +174,42 @@ int main(int argc, char **argv)
     vocab[b * max_w + a] = 0;
     for (a = 0; a < max_w; a++) vocab[b * max_w + a] = toupper(vocab[b * max_w + a]);
     if (binary) {
-      for (a = 0; a < size; a++) fread(&M[a + b * size], sizeof(float), 1, f);
+      for (a = 0; a < num_features; a++) {
+        fread(&feature, sizeof(feature_t), 1, f);
+#ifndef BITWISE_DISTANCES
+        M[a + b * size] = feature;
+#else
+        putbit(M + b * size, a, feature > 0);
+#endif
+      }
     } else {
-      for (a = 0; a < size; a++) fscanf(f, "%f ", &M[a + b * size]);
+      for (a = 0; a < num_features; a++) {
+        fscanf(f, "%f ", &feature);
+#ifndef BITWISE_DISTANCES
+        M[a + b * size] = feature;
+#else
+        putbit(M + b * size, a, feature > 0);
+#endif
+      }
     }
-    for (a = 0; a < size; a++) M[a+b*size] = quantize(M[a+b*size], bitlevel);
+#ifndef BITWISE_DISTANCES
+    for (a = 0; a < num_features; a++) M[a+b*size] = quantize(M[a+b*size], bitlevel);
     len = 0;
-    for (a = 0; a < size; a++) len += M[a + b * size] * M[a + b * size];
+    for (a = 0; a < num_features; a++) len += M[a + b * size] * M[a + b * size];
     len = sqrt(len);
-    for (a = 0; a < size; a++) M[a + b * size] /= len;
+    for (a = 0; a < num_features; a++) M[a + b * size] /= len;
+#endif
   }
   fclose(f);
   TCN = 0;
   while (1) {
-    for (a = 0; a < N; a++) bestd[a] = 0;
+    for (a = 0; a < N; a++) {
+#ifndef BITWISE_DISTANCES
+      bestd[a] = 0;
+#else
+      bestd[a] = num_features;
+#endif
+    }
     for (a = 0; a < N; a++) bestw[a][0] = 0;
     scanf("%s", st1);
     for (a = 0; a < strlen(st1); a++) st1[a] = toupper(st1[a]);
@@ -160,7 +240,13 @@ int main(int argc, char **argv)
     b2 = b;
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st3)) break;
     b3 = b;
-    for (a = 0; a < N; a++) bestd[a] = 0;
+    for (a = 0; a < N; a++) {
+#ifndef BITWISE_DISTANCES
+      bestd[a] = 0;
+#else
+      bestd[a] = num_features;
+#endif
+    }
     for (a = 0; a < N; a++) bestw[a][0] = 0;
     TQ++;
     if (b1 == words) continue;
@@ -169,19 +255,33 @@ int main(int argc, char **argv)
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st4)) break;
     if (b == words) continue;
 
-    for (a = 0; a < size; a++) vec[a] = (M[a + b2 * size] - M[a + b1 * size]) + M[a + b3 * size];
+#ifndef BITWISE_DISTANCES
+    for (a = 0; a < num_features; a++) vec[a] = (M[a + b2 * size] - M[a + b1 * size]) + M[a + b3 * size];
+#else
+    bit_array_not(vec, M + b1 * size, size);
+    bit_array_and(vec, M + b2 * size, vec, size);
+    bit_array_or(vec, M + b3 * size, vec, size);
+#endif
     
     TQS++;
     for (c = 0; c < words; c++) {
       if (c == b1) continue;
       if (c == b2) continue;
       if (c == b3) continue;
+#ifndef BITWISE_DISTANCES
       dist = 0;
-      for (a = 0; a < size; a++) {
-	dist += vec[a] * M[a + c * size];
+      for (a = 0; a < num_features; a++) {
+        dist += vec[a] * M[a + c * size];
       }
+#else
+      dist = bit_array_hamming_distance(vec, M + c * size, size);
+#endif
       for (a = 0; a < N; a++) {
+#ifndef BITWISE_DISTANCES
 	if (dist > bestd[a]) {
+#else
+	if (dist < bestd[a]) {
+#endif
 	  for (d = N - 1; d > a; d--) {
 	    bestd[d] = bestd[d - 1];
 	    strcpy(bestw[d], bestw[d - 1]);
