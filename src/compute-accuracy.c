@@ -19,6 +19,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <time.h>
 
 #ifndef BITWISE_DISTANCES
 typedef float feature_t;
@@ -113,6 +114,7 @@ int main(int argc, char **argv)
   char st1[max_size], st2[max_size], st3[max_size], st4[max_size], bestw[N][max_size], file_name[max_size];
   distance_t dist, bestd[N];
   size_t words, size, num_features, a, b, c, d, b1, b2, b3, threshold = 0;
+  clock_t time;
   int bitlevel = 0, binary = 1;
   feature_t *M;
   char *vocab;
@@ -137,6 +139,7 @@ int main(int argc, char **argv)
         break;
     }
   }
+  time = clock();
   f = fopen(file_name, "rb");
   if (f == NULL) {
     printf("Input file not found\n");
@@ -201,6 +204,9 @@ int main(int argc, char **argv)
 #endif
   }
   fclose(f);
+  time = clock() - time;
+  printf("Loaded input file in %f seconds\n", ((double)time) / CLOCKS_PER_SEC);
+  time = clock();
   TCN = 0;
   while (1) {
     for (a = 0; a < N; a++) {
@@ -302,5 +308,7 @@ int main(int argc, char **argv)
     TACN++;
   }
   printf("Questions seen / total: %d %d   %.2f %% \n", TQS, TQ, TQS/(float)TQ*100);
+  time = clock() - time;
+  printf("Computed accuracy in %f seconds\n", ((double)time) / CLOCKS_PER_SEC);
   return 0;
 }
