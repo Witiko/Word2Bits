@@ -68,8 +68,21 @@ static inline void bit_array_or(feature_t* dest, feature_t* x, feature_t* y, siz
 #endif
 
 const size_t max_size = 2000;         // max length of strings
+const size_t max_analogies = 20000;   // max number of analogies
 const size_t N = 1;                   // number of closest words
 const size_t max_w = 50;              // max length of vocabulary entries
+
+struct timespec time_difference(struct timespec time_start, struct timespec time_end) {
+  struct timespec temp;
+  if ((time_end.tv_nsec - time_start.tv_nsec) < 0) {
+    temp.tv_sec = time_end.tv_sec - time_start.tv_sec - 1;
+    temp.tv_nsec = 1000000000 + time_end.tv_nsec - time_start.tv_nsec;
+  } else {
+    temp.tv_sec = time_end.tv_sec - time_start.tv_sec;
+    temp.tv_nsec = time_end.tv_nsec - time_start.tv_nsec;
+  }
+  return temp;
+}
 
 float quantize(float num, int bitlevel) {
 
@@ -111,14 +124,15 @@ float quantize(float num, int bitlevel) {
 int main(int argc, char **argv)
 {
   FILE *f;
-  char st1[max_size], st2[max_size], st3[max_size], st4[max_size], bestw[N][max_size], file_name[max_size];
+  char *sts, *st1, st2[max_size], st3[max_size], *st4, bestw[N][max_size], file_name[max_size];
   distance_t dist, bestd[N];
-  size_t words, size, num_features, a, b, c, d, b1, b2, b3, threshold = 0;
-  clock_t time;
+  size_t words, size, num_features, num_analogies = 0, a, b, c, d, *bs, *b1, *b2, *b3, threshold = 0;
+  struct timespec time_start, time_end, duration;
   int bitlevel = 0, binary = 1;
-  feature_t *M;
+  feature_t *M, *vec, *vecs;
   char *vocab;
   int TCN, CCN = 0, TACN = 0, CACN = 0, SECN = 0, SYCN = 0, SEAC = 0, SYAC = 0, QID = 0, TQ = 0, TQS = 0;
+
   if (argc < 2) {
     printf("Usage: ./compute-accuracy [-binary 0|1] <FILE> <bitlevel> <threshold>\nwhere FILE contains word projections, and threshold is used to reduce vocabulary of the model for fast approximate evaluation (0 = off, otherwise typical value is 30000)\n");
     return 0;
@@ -139,7 +153,7 @@ int main(int argc, char **argv)
         break;
     }
   }
-  time = clock();
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
   f = fopen(file_name, "rb");
   if (f == NULL) {
     printf("Input file not found\n");
@@ -155,14 +169,14 @@ int main(int argc, char **argv)
   size = RESERVE_BITS(num_features);
 #endif
   float feature;
-  feature_t vec[size];
   vocab = (char *)malloc(words * max_w * sizeof(char));
   M = (feature_t *)malloc(words * size * sizeof(feature_t));
   if (M == NULL) {
     printf("Cannot allocate memory: %lld MB\n", words * size * sizeof(feature_t) / 1048576);
     return -1;
   }
-  printf("Starting eval...\n");
+
+  printf("Loading word vectors ...\n");
   fflush(stdout);
   for (b = 0; b < words; b++) {
 #ifdef BITWISE_DISTANCES
@@ -204,33 +218,26 @@ int main(int argc, char **argv)
 #endif
   }
   fclose(f);
-  time = clock() - time;
-  printf("Loaded input file in %f seconds\n", ((double)time) / CLOCKS_PER_SEC);
-  time = clock();
-  TCN = 0;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_end);
+  duration = time_difference(time_start, time_end);
+  printf("Loaded word vectors in %d.%09ld seconds\n", duration.tv_sec, duration.tv_nsec);
+
+  printf("Loading analogies ...\n");
+  sts = (char *)malloc(max_analogies * 2 * max_size * sizeof(char));
+  bs = (size_t *)malloc(max_analogies * 3 * sizeof(size_t));
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
   while (1) {
-    for (a = 0; a < N; a++) {
-#ifndef BITWISE_DISTANCES
-      bestd[a] = 0;
-#else
-      bestd[a] = num_features;
-#endif
-    }
-    for (a = 0; a < N; a++) bestw[a][0] = 0;
+    st1 = sts + num_analogies * 2 * max_size;
+    st4 = st1 + max_size;
+    b1 = bs + num_analogies * 3;
+    b2 = b1 + 1;
+    b3 = b2 + 1;
     scanf("%s", st1);
     for (a = 0; a < strlen(st1); a++) st1[a] = toupper(st1[a]);
     if ((!strcmp(st1, ":")) || (!strcmp(st1, "EXIT")) || feof(stdin)) {
-      if (TCN == 0) TCN = 1;
-      if (QID != 0) {
-	printf("ACCURACY TOP1: %.2f %%  (%d / %d)\n", CCN / (float)TCN * 100, CCN, TCN);
-	printf("Total accuracy: %.2f %%   Semantic accuracy: %.2f %%   Syntactic accuracy: %.2f %% \n", CACN / (float)TACN * 100, SEAC / (float)SECN * 100, SYAC / (float)SYCN * 100);
-      }
-      QID++;
-      scanf("%s", st1);
+      scanf("%s", st4);
       if (feof(stdin)) break;
-      printf("%s:\n", st1);
-      TCN = 0;
-      CCN = 0;
+      num_analogies++;
       continue;
     }
     if (!strcmp(st1, "EXIT")) break;
@@ -241,11 +248,69 @@ int main(int argc, char **argv)
     scanf("%s", st4);
     for (a = 0; a < strlen(st4); a++) st4[a] = toupper(st4[a]);
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st1)) break;
-    b1 = b;
+    *b1 = b;
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st2)) break;
-    b2 = b;
+    *b2 = b;
     for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st3)) break;
-    b3 = b;
+    *b3 = b;
+    TQ++;
+    if (*b1 == words) continue;
+    if (*b2 == words) continue;
+    if (*b3 == words) continue;
+    for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st4)) break;
+    if (b == words) continue;
+    TQS++;
+    num_analogies++;
+  }
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_end);
+  duration = time_difference(time_start, time_end);
+  printf("Questions seen / total: %d %d   %.2f %% \n", TQS, TQ, TQS/(float)TQ*100);
+  printf("Loaded analogies in %d.%09ld seconds\n", duration.tv_sec, duration.tv_nsec);
+
+  printf("Solving analogies ...\n");
+  TCN = 0;
+  vecs = (feature_t *)malloc(num_analogies * size * sizeof(feature_t));
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
+  for (b = 0; b < num_analogies; b++) {
+    st1 = sts + b * 2 * max_size;
+    if ((!strcmp(st1, ":")) || (!strcmp(st1, "EXIT"))) {
+      st4 = st1 + max_size;
+      continue;
+    }
+    b1 = bs + b * 3;
+    b2 = b1 + 1;
+    b3 = b2 + 1;
+    vec = vecs + b * size;
+#ifndef BITWISE_DISTANCES
+    for (a = 0; a < num_features; a++) vec[a] = (M[a + *b2 * size] - M[a + *b1 * size]) + M[a + *b3 * size];
+#else
+    bit_array_not(vec, M + *b1 * size, size);
+    bit_array_and(vec, M + *b2 * size, vec, size);
+    bit_array_or(vec, M + *b3 * size, vec, size);
+#endif
+  }
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_end);
+  duration = time_difference(time_start, time_end);
+  printf("Solved analogies in %d.%09ld seconds\n", duration.tv_sec, duration.tv_nsec);
+
+  printf("Evaluating solution ...\n");
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
+  for (b = 0; b <= num_analogies; b++) {
+    st1 = sts + b * 2 * max_size;
+    if ((!strcmp(st1, ":")) || (!strcmp(st1, "EXIT")) || b == num_analogies) {
+      if (TCN == 0) TCN = 1;
+      if (QID != 0) {
+        printf("ACCURACY TOP1: %.2f %%  (%d / %d)\n", CCN / (float)TCN * 100, CCN, TCN);
+        printf("Total accuracy: %.2f %%   Semantic accuracy: %.2f %%   Syntactic accuracy: %.2f %% \n", CACN / (float)TACN * 100, SEAC / (float)SECN * 100, SYAC / (float)SYCN * 100);
+      }
+      QID++;
+      st4 = st1 + max_size;
+      if (b == num_analogies) break;
+      printf("%s:\n", st4);
+      TCN = 0;
+      CCN = 0;
+      continue;
+    }
     for (a = 0; a < N; a++) {
 #ifndef BITWISE_DISTANCES
       bestd[a] = 0;
@@ -254,26 +319,14 @@ int main(int argc, char **argv)
 #endif
     }
     for (a = 0; a < N; a++) bestw[a][0] = 0;
-    TQ++;
-    if (b1 == words) continue;
-    if (b2 == words) continue;
-    if (b3 == words) continue;
-    for (b = 0; b < words; b++) if (!strcmp(&vocab[b * max_w], st4)) break;
-    if (b == words) continue;
-
-#ifndef BITWISE_DISTANCES
-    for (a = 0; a < num_features; a++) vec[a] = (M[a + b2 * size] - M[a + b1 * size]) + M[a + b3 * size];
-#else
-    bit_array_not(vec, M + b1 * size, size);
-    bit_array_and(vec, M + b2 * size, vec, size);
-    bit_array_or(vec, M + b3 * size, vec, size);
-#endif
-    
-    TQS++;
+    b1 = bs + b * 3;
+    b2 = b1 + 1;
+    b3 = b2 + 1;
+    vec = vecs + b * size;
     for (c = 0; c < words; c++) {
-      if (c == b1) continue;
-      if (c == b2) continue;
-      if (c == b3) continue;
+      if (c == *b1) continue;
+      if (c == *b2) continue;
+      if (c == *b3) continue;
 #ifndef BITWISE_DISTANCES
       dist = 0;
       for (a = 0; a < num_features; a++) {
@@ -284,20 +337,21 @@ int main(int argc, char **argv)
 #endif
       for (a = 0; a < N; a++) {
 #ifndef BITWISE_DISTANCES
-	if (dist > bestd[a]) {
+        if (dist > bestd[a]) {
 #else
-	if (dist < bestd[a]) {
+        if (dist < bestd[a]) {
 #endif
-	  for (d = N - 1; d > a; d--) {
-	    bestd[d] = bestd[d - 1];
-	    strcpy(bestw[d], bestw[d - 1]);
-	  }
-	  bestd[a] = dist;
-	  strcpy(bestw[a], &vocab[c * max_w]);
-	  break;
-	}
+          for (d = N - 1; d > a; d--) {
+            bestd[d] = bestd[d - 1];
+            strcpy(bestw[d], bestw[d - 1]);
+          }
+          bestd[a] = dist;
+          strcpy(bestw[a], &vocab[c * max_w]);
+          break;
+        }
       }
     }
+    st4 = st1 + max_size;
     if (!strcmp(st4, bestw[0])) {
       CCN++;
       CACN++;
@@ -307,8 +361,8 @@ int main(int argc, char **argv)
     TCN++;
     TACN++;
   }
-  printf("Questions seen / total: %d %d   %.2f %% \n", TQS, TQ, TQS/(float)TQ*100);
-  time = clock() - time;
-  printf("Computed accuracy in %f seconds\n", ((double)time) / CLOCKS_PER_SEC);
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_end);
+  duration = time_difference(time_start, time_end);
+  printf("Evaluated solution in %d.%09ld seconds\n", duration.tv_sec, duration.tv_nsec);
   return 0;
 }
